@@ -22,12 +22,12 @@ def coffee_queue_handler():
         return jsonify(response_type='ephemeral', text="잘못된 명령어입니다.")
 
     action = command[0]
-    if action == "enqueue":
+    if action == "add":
         username = command[1]
         coffee_queue.append(username)
         queue_list = " ".join(coffee_queue)
         message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐: {queue_list}"
-    elif action == "dequeue":
+    elif action == "shoot":
         if coffee_queue:
             username = coffee_queue.pop(0)
             queue_list = " ".join(coffee_queue)
@@ -36,12 +36,12 @@ def coffee_queue_handler():
             message = "커피 큐가 비어 있습니다."
     elif action == "clear":
         coffee_queue.clear()
-        message = "커피 큐가 초기화되었습니다. 현재 큐가 비어 있습니다."
+        message = "커피 큐가 초기화되었습니다.\n현재 큐 : EMPTY"
     elif action == "show":
         if coffee_queue:
             username = coffee_queue[0]
             queue_list = " ".join(coffee_queue)
-            message = f"{username}님이 커피를 쏠 차례입니다 ☕️\n현재 큐: {queue_list}"
+            message = f"{username}님이 커피를 쏠 차례입니다. 🔫\n현재 큐: {queue_list}"
         else:
             message = "커피 큐가 비어 있습니다."
     elif action == "modify":
