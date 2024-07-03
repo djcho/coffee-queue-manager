@@ -18,8 +18,6 @@ def get_queue_list():
 def coffee_queue_handler():
     data = request.form
     command = data.get('text').strip().split()
-    channel_id = data.get('channel_id')
-    response_url = data.get('response_url')
     userpool = ['소인규', '조대준', '김현우', '이진아', '오성찬']
 
     if not command:
@@ -65,11 +63,6 @@ def coffee_queue_handler():
         "response_type": "in_channel",
         "text": message
     }
-
-    try:
-        client.chat_postMessage(channel=channel_id, text=message)
-    except SlackApiError as e:
-        return jsonify(response_type='ephemeral', text=f"오류: {e.response['error']}")
 
     return jsonify(response)
 
