@@ -25,17 +25,19 @@ def coffee_queue_handler():
     if action == "enqueue":
         username = command[1]
         coffee_queue.append(username)
-        message = f"{username}님이 커피 큐에 추가되었습니다."
+        queue_list = " ".join(coffee_queue)
+        message = f"{username}님이 커피 큐에 추가되었습니다. 현재 큐: {queue_list}"
     elif action == "dequeue":
         username = command[1]
         if username in coffee_queue:
             coffee_queue.remove(username)
-            message = f"{username}님이 커피 큐에서 제거되었습니다."
+            queue_list = " ".join(coffee_queue)
+            message = f"{username}님이 커피 큐에서 제거되었습니다. 현재 큐: {queue_list}"
         else:
             message = f"{username}님은 커피 큐에 없습니다."
     elif action == "clear":
         coffee_queue.clear()
-        message = "커피 큐가 초기화되었습니다."
+        message = "커피 큐가 초기화되었습니다. 현재 큐가 비어 있습니다."
     elif action == "show":
         if coffee_queue:
             queue_list = " ".join(coffee_queue)
