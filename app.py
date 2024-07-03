@@ -26,24 +26,35 @@ def coffee_queue_handler():
         username = command[1]
         coffee_queue.append(username)
         queue_list = " ".join(coffee_queue)
-        message = f"{username}님이 커피 큐에 추가되었습니다. 현재 큐: {queue_list}"
+        message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐: {queue_list}"
     elif action == "dequeue":
-        username = command[1]
-        if username in coffee_queue:
-            coffee_queue.remove(username)
+        if coffee_queue:
+            username = coffee_queue.pop(0)
             queue_list = " ".join(coffee_queue)
-            message = f"{username}님이 커피 큐에서 제거되었습니다. 현재 큐: {queue_list}"
+            message = f"{username}님이 커피 큐에서 제거되었습니다.\n현재 큐: {queue_list}"
         else:
-            message = f"{username}님은 커피 큐에 없습니다."
+            message = "커피 큐가 비어 있습니다."
     elif action == "clear":
         coffee_queue.clear()
         message = "커피 큐가 초기화되었습니다. 현재 큐가 비어 있습니다."
     elif action == "show":
         if coffee_queue:
+            username = coffee_queue[0]
             queue_list = " ".join(coffee_queue)
-            message = f"현재 커피 큐: {queue_list}"
+            message = f"{username}님이 커피를 쏠 차례입니다 ☕️\n현재 큐: {queue_list}"
         else:
             message = "커피 큐가 비어 있습니다."
+    elif action == "modify":
+        try:
+            index = int(command[1])
+            if 0 <= index < len(coffee_queue):
+                removed_user = coffee_queue.pop(index)
+                queue_list = " ".join(coffee_queue)
+                message = f"{removed_user}님이 큐에서 제거되었습니다.\n현재 큐: {queue_list}"
+            else:
+                message = "잘못된 인덱스입니다. 유효한 인덱스를 입력하세요."
+        except (ValueError, IndexError):
+            message = "유효한 숫자를 입력하세요."
     else:
         message = "잘못된 명령어입니다."
 
