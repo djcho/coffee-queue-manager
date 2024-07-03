@@ -18,6 +18,7 @@ def coffee_queue_handler():
     channel_id = data.get('channel_id')
     response_url = data.get('response_url')
     userpool = ['소인규', '조대준', '김현우', '이진아', '오성찬']
+    queue_list = " ".join(coffee_queue)
 
     if not command:
         return jsonify(response_type='ephemeral', text="잘못된 명령어입니다.")
@@ -27,7 +28,6 @@ def coffee_queue_handler():
         username = command[1]
         if username in userpool:
             coffee_queue.append(username)
-            queue_list = " ".join(coffee_queue)
             message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐: {queue_list}"
         else:
             message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐: {queue_list}"
