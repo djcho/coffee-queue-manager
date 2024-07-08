@@ -162,7 +162,7 @@ def coffee_queue_handler():
                     new_user = CoffeeQueue(username=username, reason=reason, order=index)
                     db.session.add(new_user)
                     db.session.commit()
-                    log_action("insert", username, reason)
+                    #log_action("insert", username, reason)
                     message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
                 else:
                     message = "유효한 인덱스를 입력하세요."
