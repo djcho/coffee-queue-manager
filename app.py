@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
@@ -18,7 +18,7 @@ client = WebClient(token=slack_token)
 class CoffeeQueue(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False)
-    date_added = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+    date_added = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     reason = db.Column(db.String(200), nullable=False)
 
     def __repr__(self):
@@ -28,7 +28,7 @@ class Log(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     action = db.Column(db.String(50), nullable=False)
     username = db.Column(db.String(50), nullable=False)
-    date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     reason = db.Column(db.String(200))
 
     def __repr__(self):
@@ -49,6 +49,12 @@ def get_queue_list():
     return "\n".join(queue_list)
 
 def log_action(action, username, reason=None):
+    # 한 달 지난 로그 삭제
+    one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    Log.query.filter(Log.date < one_month_ago).delete()
+    db.session.commit()
+
+    # 새로운 로그 추가
     new_log = Log(action=action, username=username, reason=reason)
     db.session.add(new_log)
     db.session.commit()
@@ -110,7 +116,7 @@ def coffee_queue_handler():
         except (ValueError, IndexError):
             message = "유효한 숫자를 입력하세요."
     elif action == "history":
-        one_month_ago = datetime.utcnow() - timedelta(days=30)
+        one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
         logs = Log.query.filter(Log.date >= one_month_ago).all()
         if logs:
             log_messages = [f"{log.date.strftime('%Y-%m-%d %H:%M:%S')} - {log.action} - {log.username} - {log.reason or ''}" for log in logs]
