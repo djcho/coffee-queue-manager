@@ -30,7 +30,7 @@ class Log(db.Model):
     action = db.Column(db.String(50), nullable=False)
     username = db.Column(db.String(50), nullable=False)
     date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    reason = db.Column(db.String(200))
+    reason = db.Column(db.String(200), nullable=True)
 
     def __repr__(self):
         return f"<Log {self.action} - {self.username}>"
@@ -57,6 +57,7 @@ def log_action(action, username, reason=None):
     db.session.commit()
 
     # 새로운 로그 추가
+    reason = reason or ""
     new_log = Log(action=action, username=username, reason=reason)
     db.session.add(new_log)
     db.session.commit()
