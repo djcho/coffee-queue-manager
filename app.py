@@ -14,7 +14,7 @@ coffee_queue = []
 def get_queue_list():
     return " ".join(coffee_queue) if coffee_queue else "EMPTY"
 
-@app.route('/qc', methods=['POST'])
+@app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
     command = data.get('text').strip().split()
