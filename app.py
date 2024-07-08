@@ -70,7 +70,17 @@ def coffee_queue_handler():
         return jsonify(response_type='ephemeral', text="잘못된 명령어입니다.")
 
     action = command[0]
-    if action == "add":
+    if action == "help":
+        message = (
+            "/cq add <username> <reason> - 사용자를 커피 큐에 추가합니다. 예: /cq add 조대준 데일리미팅 지각\n"
+            "/cq shoot - 커피 큐에서 첫 번째 사용자를 제거합니다.\n"
+            "/cq clear - 커피 큐를 초기화합니다.\n"
+            "/cq show - 현재 커피 큐를 표시합니다.\n"
+            "/cq remove <index> - 특정 인덱스의 사용자를 큐에서 제거합니다. 예: /cq remove 1\n"
+            "/cq insert <index> <username> <reason> - 특정 인덱스 위치에 사용자를 추가합니다. 예: /cq insert 1 조대준 추가 사유\n"
+            "/cq history - 지난 한 달간의 로그를 표시합니다.\n"
+        )
+    elif action == "add":
         if len(command) < 3:
             return jsonify(response_type='ephemeral', text="사유를 입력하세요. 사용법: /cq add <username> <reason>")
         username = command[1]
