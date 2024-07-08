@@ -36,7 +36,8 @@ class Log(db.Model):
 
 # 데이터베이스 초기화 함수
 def create_tables():
-    db.create_all()
+    with app.app_context():
+        db.create_all()
 
 def get_queue_list():
     if not CoffeeQueue.query.all():
