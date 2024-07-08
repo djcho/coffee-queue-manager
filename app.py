@@ -113,6 +113,7 @@ def coffee_queue_handler():
         if first_user:
             db.session.delete(first_user)
             adjust_order_after_remove(1)
+            db.session.commit()
             log_action("shoot", first_user.username)
             message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
@@ -180,6 +181,11 @@ def coffee_queue_handler():
         "response_type": "in_channel",
         "text": message
     }
+
+    try:
+        client.chat_postMessage(channel=channel_id, text=message)
+    except SlackApiError as e:
+        return jsonify(response_type='ephemeral', text=f"Slack API 오류: {e.response['error']}")
 
     return jsonify(response)
 
