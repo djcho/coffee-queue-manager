@@ -20,6 +20,7 @@ class CoffeeQueue(db.Model):
     username = db.Column(db.String(50), nullable=False)
     date_added = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     reason = db.Column(db.String(200), nullable=False)
+    order = db.Column(db.Integer, nullable=False, default=0)
 
     def __repr__(self):
         return f"<CoffeeQueue {self.username}>"
@@ -40,10 +41,11 @@ def create_tables():
         db.create_all()
 
 def get_queue_list():
-    if not CoffeeQueue.query.all():
+    queue = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+    if not queue:
         return "EMPTY"
     queue_list = []
-    for user in CoffeeQueue.query.all():
+    for user in queue:
         date_str = user.date_added.strftime('%m/%d')
         queue_list.append(f"{user.username} ({date_str} : {user.reason})")
     return "\n".join(queue_list)
@@ -57,6 +59,18 @@ def log_action(action, username, reason=None):
     # 새로운 로그 추가
     new_log = Log(action=action, username=username, reason=reason)
     db.session.add(new_log)
+    db.session.commit()
+
+def adjust_order_after_insert(index):
+    users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+    for user in users[index:]:
+        user.order += 1
+    db.session.commit()
+
+def adjust_order_after_remove(index):
+    users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+    for user in users[index:]:
+        user.order -= 1
     db.session.commit()
 
 @app.route('/cq', methods=['POST'])
@@ -86,7 +100,8 @@ def coffee_queue_handler():
         username = command[1]
         reason = " ".join(command[2:])
         if username in userpool:
-            new_user = CoffeeQueue(username=username, reason=reason)
+            max_order = db.session.query(db.func.max(CoffeeQueue.order)).scalar() or 0
+            new_user = CoffeeQueue(username=username, reason=reason, order=max_order + 1)
             db.session.add(new_user)
             db.session.commit()
             log_action("add", username, reason)
@@ -94,22 +109,23 @@ def coffee_queue_handler():
         else:
             message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
     elif action == "shoot":
-        first_user = CoffeeQueue.query.first()
+        first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
         if first_user:
             db.session.delete(first_user)
-            db.session.commit()
+            adjust_order_after_remove(1)
             log_action("shoot", first_user.username)
             message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
     elif action == "clear":
-        for user in CoffeeQueue.query.all():
+        queue = CoffeeQueue.query.all()
+        for user in queue:
             log_action("clear", user.username)
         CoffeeQueue.query.delete()
         db.session.commit()
         message = "커피 큐가 초기화되었습니다.\n현재 큐 : EMPTY"
     elif action == "show":
-        first_user = CoffeeQueue.query.first()
+        first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
         if first_user:
             message = f"{first_user.username}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
         else:
@@ -117,10 +133,11 @@ def coffee_queue_handler():
     elif action == "remove":
         try:
             index = int(command[1])
-            user_to_remove = CoffeeQueue.query.offset(index).first()
+            user_to_remove = CoffeeQueue.query.order_by(CoffeeQueue.order).offset(index).first()
             if user_to_remove:
                 db.session.delete(user_to_remove)
                 db.session.commit()
+                adjust_order_after_remove(index)
                 log_action("remove", user_to_remove.username)
                 message = f"{user_to_remove.username}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
             else:
@@ -135,21 +152,15 @@ def coffee_queue_handler():
             if username not in userpool:
                 message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
             else:
-                # 모든 기존 항목을 가져와 삭제하고 임시 리스트에 저장
-                users = CoffeeQueue.query.all()
-                user_list = [(user.username, user.reason) for user in users]
-                CoffeeQueue.query.delete()
-                db.session.commit()
-
-                # 새로운 사용자를 추가할 위치를 결정하고, 새로운 큐를 구성
-                user_list.insert(index, (username, reason))
-                for u in user_list:
-                    new_user = CoffeeQueue(username=u[0], reason=u[1])
+                if 0 <= index <= CoffeeQueue.query.count():
+                    adjust_order_after_insert(index)
+                    new_user = CoffeeQueue(username=username, reason=reason, order=index)
                     db.session.add(new_user)
-                db.session.commit()
-
-                log_action("insert", username, reason)
-                message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
+                    db.session.commit()
+                    log_action("insert", username, reason)
+                    message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
+                else:
+                    message = "유효한 인덱스를 입력하세요."
         except (ValueError, IndexError):
             message = "유효한 숫자를 입력하세요."
         except Exception as e:
