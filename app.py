@@ -59,7 +59,7 @@ def log_action(action, username, reason=None):
     db.session.add(new_log)
     db.session.commit()
 
-@app.route('/qc', methods=['POST'])
+@app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
     command = data.get('text').strip().split()
@@ -132,6 +132,10 @@ def coffee_queue_handler():
     }
 
     return jsonify(response)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify(status="OK"), 200
 
 if __name__ == "__main__":
     create_tables()
