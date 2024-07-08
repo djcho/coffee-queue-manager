@@ -59,7 +59,7 @@ def log_action(action, username, reason=None):
     db.session.add(new_log)
     db.session.commit()
 
-@app.route('/cq', methods=['POST'])
+@app.route('/qc', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
     command = data.get('text').strip().split()
@@ -71,6 +71,8 @@ def coffee_queue_handler():
 
     action = command[0]
     if action == "add":
+        if len(command) < 3:
+            return jsonify(response_type='ephemeral', text="사유를 입력하세요. 사용법: /qc add <username> <reason>")
         username = command[1]
         reason = " ".join(command[2:])
         if username in userpool:
@@ -119,7 +121,7 @@ def coffee_queue_handler():
         one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
         logs = Log.query.filter(Log.date >= one_month_ago).all()
         if logs:
-            log_messages = [f"{log.date.strftime('%Y-%m-%d %H:%M:%S')} - {log.action} - {log.username} - {log.reason or ''}" for log in logs]
+            log_messages = [f"[{log.date.strftime('%Y-%m-%d %H:%M:%S')}] - {log.action} - {log.username} - {log.reason}" if log.reason else f"[{log.date.strftime('%Y-%m-%d %H:%M:%S')}] - {log.action} - {log.username}" for log in logs]
             message = "지난 한 달간의 로그:\n" + "\n".join(log_messages)
         else:
             message = "지난 한 달간의 로그가 없습니다."
