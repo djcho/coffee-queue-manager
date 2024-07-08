@@ -137,10 +137,13 @@ def coffee_queue_handler():
             index = int(command[1])
             user_to_remove = CoffeeQueue.query.order_by(CoffeeQueue.order).offset(index).first()
             if user_to_remove:
+                username = user_to_remove.username;
+                reason = user_to_remove.reason;
+
                 db.session.delete(user_to_remove)
                 db.session.commit()
                 adjust_order_after_remove(index)
-                log_action("remove", user_to_remove.username, user_to_remove.reason)
+                log_action("remove", username, reason)
                 message = f"{user_to_remove.username}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
             else:
                 message = "잘못된 인덱스입니다. 유효한 인덱스를 입력하세요."
