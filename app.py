@@ -34,8 +34,7 @@ class Log(db.Model):
     def __repr__(self):
         return f"<Log {self.action} - {self.username}>"
 
-# 데이터베이스 초기화
-@app.before_first_request
+# 데이터베이스 초기화 함수
 def create_tables():
     db.create_all()
 
@@ -134,5 +133,6 @@ def coffee_queue_handler():
     return jsonify(response)
 
 if __name__ == "__main__":
+    create_tables()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
