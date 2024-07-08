@@ -137,14 +137,15 @@ def coffee_queue_handler():
             else:
                 # 모든 기존 항목을 가져와 삭제하고 임시 리스트에 저장
                 users = CoffeeQueue.query.all()
+                user_list = [(user.username, user.reason) for user in users]
                 CoffeeQueue.query.delete()
                 db.session.commit()
 
                 # 새로운 사용자를 추가할 위치를 결정하고, 새로운 큐를 구성
-                new_user = CoffeeQueue(username=username, reason=reason)
-                new_queue = users[:index] + [new_user] + users[index:]
-                for user in new_queue:
-                    db.session.add(user)
+                user_list.insert(index, (username, reason))
+                for u in user_list:
+                    new_user = CoffeeQueue(username=u[0], reason=u[1])
+                    db.session.add(new_user)
                 db.session.commit()
 
                 log_action("insert", username, reason)
@@ -177,5 +178,5 @@ def health_check():
 
 if __name__ == "__main__":
     create_tables()
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 0))
     app.run(host="0.0.0.0", port=port)
