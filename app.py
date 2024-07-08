@@ -182,11 +182,6 @@ def coffee_queue_handler():
         "text": message
     }
 
-    try:
-        client.chat_postMessage(channel=channel_id, text=message)
-    except SlackApiError as e:
-        return jsonify(response_type='ephemeral', text=f"Slack API 오류: {e.response['error']}")
-
     return jsonify(response)
 
 @app.route('/health', methods=['GET'])
