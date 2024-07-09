@@ -66,13 +66,11 @@ def adjust_order_after_insert(index):
     users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
     for user in users[index:]:
         user.order += 1
-    db.session.commit()
 
 def adjust_order_after_remove(index):
     users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
     for user in users[index:]:
         user.order -= 1
-    db.session.commit()
 
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
