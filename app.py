@@ -62,16 +62,6 @@ def log_action(action, username, reason=None):
     db.session.add(new_log)
     db.session.commit()
 
-def adjust_order_after_insert(index):
-    users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
-    for user in users[index:]:
-        user.order += 1
-
-def adjust_order_after_remove(index):
-    users = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
-    for user in users[index:]:
-        user.order -= 1
-
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
@@ -137,9 +127,15 @@ def coffee_queue_handler():
             if user_to_remove:
                 username = user_to_remove.username
                 reason = user_to_remove.reason
+                
                 db.session.delete(user_to_remove)
+
+                queueDatas = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+                for queueData in queueDatas[index:]:
+                    queueData.order -= 1
+
                 db.session.commit()
-                adjust_order_after_remove(index)  # 제거 후 순서 조정                
+                             
                 log_action("remove", username, reason)
                 message = f"{username}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
             else:
@@ -158,9 +154,13 @@ def coffee_queue_handler():
                     
                     new_user = CoffeeQueue(username=username, reason=reason, order=index)
                     db.session.add(new_user)
+
+                    queueDatas = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+                    for queueData in queueDatas[index + 1:]:
+                        queueData.order -= 1
+
                     db.session.commit()
 
-                    adjust_order_after_insert(index + 1)  # 삽입 전 순서 조정
                     log_action("insert", username, reason)
                     message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
                 else:
