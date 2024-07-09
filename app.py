@@ -113,7 +113,7 @@ def coffee_queue_handler():
         first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
         if first_user:
             db.session.delete(first_user)
-            adjust_order_after_remove(1)
+            adjust_order_after_remove(0)  # 0번 인덱스부터 순서 조정
             db.session.commit()
             log_action("shoot", first_user.username)
             message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
@@ -140,10 +140,9 @@ def coffee_queue_handler():
                 username = user_to_remove.username
                 reason = user_to_remove.reason
                 db.session.delete(user_to_remove)
+                adjust_order_after_remove(index)  # 제거 후 순서 조정
                 db.session.commit()
-
-                adjust_order_after_remove(index)
-#                log_action("remove", username, reason)
+                log_action("remove", username, reason)
                 message = f"{username}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
             else:
                 message = "잘못된 인덱스입니다. 유효한 인덱스를 입력하세요."
@@ -158,11 +157,11 @@ def coffee_queue_handler():
                 message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
             else:
                 if 0 <= index <= CoffeeQueue.query.count():
-                    adjust_order_after_insert(index)
+                    adjust_order_after_insert(index)  # 삽입 전 순서 조정
                     new_user = CoffeeQueue(username=username, reason=reason, order=index)
                     db.session.add(new_user)
                     db.session.commit()
-                    #log_action("insert", username, reason)
+                    log_action("insert", username, reason)
                     message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
                 else:
                     message = "유효한 인덱스를 입력하세요."
