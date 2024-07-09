@@ -101,7 +101,6 @@ def coffee_queue_handler():
         first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
         if first_user:
             db.session.delete(first_user)
-            adjust_order_after_remove(0)  # 0번 인덱스부터 순서 조정
             db.session.commit()
             log_action("shoot", first_user.username)
             message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
