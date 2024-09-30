@@ -41,7 +41,6 @@ def get_queue_list():
 
     queue_list = []
     for user in sorted(queue, key=lambda x: int(x['order'])):
-        # 날짜 형식을 09/30 형태로 변환
         date_str = format_date(user['date_added'])
         queue_list.append(f"{user['name']} ({date_str} : {user['reason']})")
     return "\n".join(queue_list)
@@ -50,7 +49,6 @@ def get_queue_list():
 def add_user_to_queue(name, reason, order):
     user_id = str(uuid4())  # 고유한 ID 생성
     
-    # 사용자 추가 (name은 중복될 수 있음, id는 고유)
     coffee_queue_table.put_item(
         Item={
             'id': user_id,   # 고유한 ID
@@ -62,7 +60,7 @@ def add_user_to_queue(name, reason, order):
     )
     return user_id
 
-# 로그 기록 함수 (DynamoDB에 로그 기록)
+# 로그 기록 함수
 def log_action(action, username, reason=None):
     log_table.put_item(
         Item={
@@ -73,6 +71,18 @@ def log_action(action, username, reason=None):
             'date': datetime.now(timezone.utc).isoformat()
         }
     )
+
+# 큐 순서 재정렬 (사용자 제거 후)
+def adjust_order_after_remove(start_index):
+    queue = coffee_queue_table.scan().get('Items', [])
+    queue = sorted(queue, key=lambda x: int(x['order']))
+    for i, user in enumerate(queue[start_index:], start=start_index):
+        coffee_queue_table.update_item(
+            Key={'id': user['id']},
+            UpdateExpression="set #ord = :new_order",
+            ExpressionAttributeNames={'#ord': 'order'},
+            ExpressionAttributeValues={':new_order': str(i)}
+        )
 
 # 커피 큐 명령어 핸들러
 @app.route('/cq', methods=['POST'])
@@ -117,6 +127,7 @@ def coffee_queue_handler():
         if queue:
             first_user = queue[0]
             coffee_queue_table.delete_item(Key={'id': first_user['id']})
+            adjust_order_after_remove(0)  # 0번 인덱스부터 순서 조정
             log_action("shoot", first_user['name'])
             message = f"{first_user['name']}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
@@ -137,6 +148,49 @@ def coffee_queue_handler():
             message = f"{first_user['name']}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
+
+    elif action == "remove":
+        try:
+            index = int(command[1])
+            queue = sorted(coffee_queue_table.scan().get('Items', []), key=lambda x: int(x['order']))
+            if 0 <= index < len(queue):
+                user_to_remove = queue[index]
+                coffee_queue_table.delete_item(Key={'id': user_to_remove['id']})
+                adjust_order_after_remove(index)  # 인덱스부터 순서 조정
+                log_action("remove", user_to_remove['name'])
+                message = f"{user_to_remove['name']}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
+            else:
+                message = "잘못된 인덱스입니다. 유효한 인덱스를 입력하세요."
+        except (ValueError, IndexError):
+            message = "유효한 숫자를 입력하세요."
+
+    elif action == "insert":
+        try:
+            index = int(command[1])
+            name = command[2]
+            reason = " ".join(command[3:])
+            if name not in userpool:
+                message = f"{name}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
+            else:
+                queue = sorted(coffee_queue_table.scan().get('Items', []), key=lambda x: int(x['order']))
+                if 0 <= index <= len(queue):
+                    # 인덱스 위치에 사용자 삽입
+                    add_user_to_queue(name, reason, index)
+
+                    # 삽입된 사용자 이후로 순서 변경
+                    for i, user in enumerate(queue[index:], start=index+1):
+                        coffee_queue_table.update_item(
+                            Key={'id': user['id']},
+                            UpdateExpression="set #ord = :new_order",
+                            ExpressionAttributeNames={'#ord': 'order'},
+                            ExpressionAttributeValues={':new_order': str(i)}
+                        )
+                    log_action("insert", name, reason)
+                    message = f"{name}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
+                else:
+                    message = "유효한 인덱스를 입력하세요."
+        except (ValueError, IndexError):
+            message = "유효한 숫자를 입력하세요."
 
     elif action == "history":
         one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
