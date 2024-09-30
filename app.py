@@ -24,7 +24,7 @@ dynamodb = boto3.resource(
 
 # 테이블 초기화
 coffee_queue_table = dynamodb.Table('coffee-queue')
-log_table = dynamodb.Table('log-table')  # 로그 테이블도 DynamoDB에 있다고 가정
+log_table = dynamodb.Table('coffee-queue-log')  # 로그 테이블도 DynamoDB에 있다고 가정
 
 # 큐 목록 가져오기
 def get_queue_list():
