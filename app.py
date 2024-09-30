@@ -4,6 +4,7 @@ from slack_sdk.errors import SlackApiError
 import os
 from datetime import datetime, timedelta, timezone
 import boto3
+from uuid import uuid4  # UUID를 사용하여 고유한 ID 생성
 
 app = Flask(__name__)
 
@@ -24,7 +25,7 @@ dynamodb = boto3.resource(
 
 # 테이블 초기화
 coffee_queue_table = dynamodb.Table('coffee-queue')
-log_table = dynamodb.Table('coffee-queue-log')  # 로그 테이블도 DynamoDB에 있다고 가정
+log_table = dynamodb.Table('coffee-queue-log')
 
 # 날짜 형식을 MM/DD로 변환하는 함수
 def format_date(iso_date_str):
@@ -42,18 +43,30 @@ def get_queue_list():
     for user in sorted(queue, key=lambda x: int(x['order'])):
         # 날짜 형식을 09/30 형태로 변환
         date_str = format_date(user['date_added'])
-        queue_list.append(f"{user['coffee']} ({date_str} : {user['reason']})")
+        queue_list.append(f"{user['name']} ({date_str} : {user['reason']})")
     return "\n".join(queue_list)
 
-# 로그 기록 함수
-def log_action(action, username, reason=None):
-    # 한 달 지난 로그 삭제 (DynamoDB에 TTL(Time to Live) 설정 필요)
-    one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+# 사용자 추가 함수 (id와 name을 함께 사용)
+def add_user_to_queue(name, reason, order):
+    user_id = str(uuid4())  # 고유한 ID 생성
+    
+    # 사용자 추가 (name은 중복될 수 있음, id는 고유)
+    coffee_queue_table.put_item(
+        Item={
+            'id': user_id,   # 고유한 ID
+            'name': name,    # 사용자 이름 (중복 가능)
+            'reason': reason,
+            'date_added': datetime.now(timezone.utc).isoformat(),
+            'order': str(order)
+        }
+    )
+    return user_id
 
-    # 새로운 로그 추가
+# 로그 기록 함수 (DynamoDB에 로그 기록)
+def log_action(action, username, reason=None):
     log_table.put_item(
         Item={
-            'id': str(datetime.now().timestamp()),  # 유니크한 ID로 타임스탬프 사용
+            'id': str(datetime.now().timestamp()),  # 고유한 ID로 타임스탬프 사용
             'action': action,
             'username': username,
             'reason': reason if reason else "",
@@ -61,7 +74,7 @@ def log_action(action, username, reason=None):
         }
     )
 
-# 사용자 추가 (DynamoDB로 변경)
+# 커피 큐 명령어 핸들러
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
@@ -74,62 +87,54 @@ def coffee_queue_handler():
     action = command[0]
     if action == "help":
         message = (
-            "/cq add <username> <reason> - 사용자를 커피 큐에 추가합니다. 예: /cq add 조대준 데일리미팅 지각\n"
+            "/cq add <name> <reason> - 사용자를 커피 큐에 추가합니다. 예: /cq add 조대준 데일리미팅 지각\n"
             "/cq shoot - 커피 큐에서 첫 번째 사용자를 제거합니다.\n"
             "/cq clear - 커피 큐를 초기화합니다.\n"
             "/cq show - 현재 커피 큐를 표시합니다.\n"
             "/cq remove <index> - 특정 인덱스의 사용자를 큐에서 제거합니다. 예: /cq remove 1\n"
-            "/cq insert <index> <username> <reason> - 특정 인덱스 위치에 사용자를 추가합니다. 예: /cq insert 1 조대준 추가 사유\n"
+            "/cq insert <index> <name> <reason> - 특정 인덱스 위치에 사용자를 추가합니다. 예: /cq insert 1 조대준 추가 사유\n"
             "/cq history - 지난 한 달간의 로그를 표시합니다.\n"
         )
     elif action == "add":
         if len(command) < 3:
-            return jsonify(response_type='ephemeral', text="사유를 입력하세요. 사용법: /cq add <username> <reason>")
-        username = command[1]
+            return jsonify(response_type='ephemeral', text="사유를 입력하세요. 사용법: /cq add <name> <reason>")
+        name = command[1]
         reason = " ".join(command[2:])
-        if username in userpool:
+        if name in userpool:
             response = coffee_queue_table.scan()
             max_order = max([int(item['order']) for item in response['Items']], default=0)
             
-            # DynamoDB에 사용자 추가
-            coffee_queue_table.put_item(
-                Item={
-                    'coffee': username,
-                    'reason': reason,
-                    'date_added': datetime.now(timezone.utc).isoformat(),
-                    'order': str(max_order + 1)
-                }
-            )
-            
-            log_action("add", username, reason)
-            message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
+            # 고유한 ID로 사용자 추가 (name 중복 허용)
+            user_id = add_user_to_queue(name, reason, max_order + 1)
+            log_action("add", name, reason)
+            message = f"{name}님이 커피 큐에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
-            message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
+            message = f"{name}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
 
     elif action == "shoot":
         response = coffee_queue_table.scan()
-        queue = sorted(response['Items'], key=lambda x: x['order'])
+        queue = sorted(response['Items'], key=lambda x: int(x['order']))
         if queue:
             first_user = queue[0]
-            coffee_queue_table.delete_item(Key={'coffee': first_user['coffee']})
-            log_action("shoot", first_user['coffee'])
-            message = f"{first_user['coffee']}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
+            coffee_queue_table.delete_item(Key={'id': first_user['id']})
+            log_action("shoot", first_user['name'])
+            message = f"{first_user['name']}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
     
     elif action == "clear":
         response = coffee_queue_table.scan()
         for user in response['Items']:
-            coffee_queue_table.delete_item(Key={'coffee': user['coffee']})
-            log_action("clear", user['coffee'])
+            coffee_queue_table.delete_item(Key={'id': user['id']})
+            log_action("clear", user['name'])
         message = "커피 큐가 초기화되었습니다.\n현재 큐 : EMPTY"
 
     elif action == "show":
         response = coffee_queue_table.scan()
-        queue = sorted(response['Items'], key=lambda x: x['order'])
+        queue = sorted(response['Items'], key=lambda x: int(x['order']))
         if queue:
             first_user = queue[0]
-            message = f"{first_user['coffee']}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
+            message = f"{first_user['name']}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
 
