@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import os
@@ -7,19 +6,15 @@ from datetime import datetime, timedelta, timezone
 import boto3
 
 app = Flask(__name__)
-app.config.from_object('config.Config')
 
-db = SQLAlchemy(app)
-
-# 환경 변수 로드 (Slack 및 AWS)
+# 환경 변수 로드
 slack_token = os.environ.get("SLACK_BOT_TOKEN")
 aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
 aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
 
-# Slack 클라이언트 생성
 client = WebClient(token=slack_token)
 
-# DynamoDB 클라이언트 생성 (서울 리전 설정)
+# DynamoDB 리소스 생성 (서울 리전)
 dynamodb = boto3.resource(
     'dynamodb',
     region_name='ap-northeast-2',
@@ -27,75 +22,45 @@ dynamodb = boto3.resource(
     aws_secret_access_key=aws_secret_key
 )
 
-# DynamoDB 테이블 선택 
-table = dynamodb.Table('coffee-queue')
-
-# 데이터베이스 모델 정의
-class CoffeeQueue(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), nullable=False)
-    date_added = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    reason = db.Column(db.String(200), nullable=False)
-    order = db.Column(db.Integer, nullable=False, default=0)
-
-    def __repr__(self):
-        return f"<CoffeeQueue {self.username}>"
-
-class Log(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    action = db.Column(db.String(50), nullable=False)
-    username = db.Column(db.String(50), nullable=False)
-    date = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
-    reason = db.Column(db.String(200), nullable=True)
-
-    def __repr__(self):
-        return f"<Log {self.action} - {self.username}>"
-
-# 데이터베이스 초기화 함수
-def create_tables():
-    with app.app_context():
-        db.create_all()
-
-# DynamoDB에 사용자 삽입 함수
-def insert_into_dynamodb(username, reason):
-    response = table.put_item(
-        Item={
-            'id': str(datetime.now().timestamp()),  # 유니크한 ID 생성
-            'username': username,
-            'reason': reason,
-            'date_added': datetime.now(timezone.utc).isoformat()
-        }
-    )
-    return response
+# 테이블 초기화
+coffee_queue_table = dynamodb.Table('coffee-queue')
+log_table = dynamodb.Table('log-table')  # 로그 테이블도 DynamoDB에 있다고 가정
 
 # 큐 목록 가져오기
 def get_queue_list():
-    queue = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
+    response = coffee_queue_table.scan()
+    queue = response.get('Items', [])
+
     if not queue:
         return "EMPTY"
+
     queue_list = []
-    for user in queue:
-        date_str = user.date_added.strftime('%m/%d')
-        queue_list.append(f"{user.username} ({date_str} : {user.reason})")
+    for user in sorted(queue, key=lambda x: x['order']):
+        date_str = user['date_added']
+        queue_list.append(f"{user['coffee']} ({date_str} : {user['reason']})")
     return "\n".join(queue_list)
 
 # 로그 기록 함수
 def log_action(action, username, reason=None):
-    one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
-    Log.query.filter(Log.date < one_month_ago).delete()
-    db.session.commit()
+    # 한 달 지난 로그 삭제 (DynamoDB에 TTL(Time to Live) 설정 필요)
+    one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
-    reason = reason or ""
-    new_log = Log(action=action, username=username, reason=reason)
-    db.session.add(new_log)
-    db.session.commit()
+    # 새로운 로그 추가
+    log_table.put_item(
+        Item={
+            'id': str(datetime.now().timestamp()),  # 유니크한 ID로 타임스탬프 사용
+            'action': action,
+            'username': username,
+            'reason': reason if reason else "",
+            'date': datetime.now(timezone.utc).isoformat()
+        }
+    )
 
-# 커피 큐 핸들러 (Slack 명령어 처리)
+# 사용자 추가 (DynamoDB로 변경)
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
     command = data.get('text').strip().split()
-    channel_id = data.get('channel_id')
     userpool = ['소인규', '조대준', '김현우', '이진아', '오성찬']
 
     if not command:
@@ -118,48 +83,61 @@ def coffee_queue_handler():
         username = command[1]
         reason = " ".join(command[2:])
         if username in userpool:
-            max_order = db.session.query(db.func.max(CoffeeQueue.order)).scalar() or 0
-            new_user = CoffeeQueue(username=username, reason=reason, order=max_order + 1)
-            db.session.add(new_user)
-            db.session.commit()
-
-            # DynamoDB에 데이터 삽입
-            insert_into_dynamodb(username, reason)
-
+            response = coffee_queue_table.scan()
+            max_order = max([int(item['order']) for item in response['Items']], default=0)
+            
+            # DynamoDB에 사용자 추가
+            coffee_queue_table.put_item(
+                Item={
+                    'coffee': username,
+                    'reason': reason,
+                    'date_added': datetime.now(timezone.utc).isoformat(),
+                    'order': str(max_order + 1)
+                }
+            )
+            
             log_action("add", username, reason)
             message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
             message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
+
     elif action == "shoot":
-        first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
-        if first_user:
-            db.session.delete(first_user)
-            db.session.commit()
-            log_action("shoot", first_user.username)
-            message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
+        response = coffee_queue_table.scan()
+        queue = sorted(response['Items'], key=lambda x: x['order'])
+        if queue:
+            first_user = queue[0]
+            coffee_queue_table.delete_item(Key={'coffee': first_user['coffee']})
+            log_action("shoot", first_user['coffee'])
+            message = f"{first_user['coffee']}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
+    
     elif action == "clear":
-        queue = CoffeeQueue.query.all()
-        for user in queue:
-            log_action("clear", user.username)
-        CoffeeQueue.query.delete()
-        db.session.commit()
+        response = coffee_queue_table.scan()
+        for user in response['Items']:
+            coffee_queue_table.delete_item(Key={'coffee': user['coffee']})
+            log_action("clear", user['coffee'])
         message = "커피 큐가 초기화되었습니다.\n현재 큐 : EMPTY"
+
     elif action == "show":
-        first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
-        if first_user:
-            message = f"{first_user.username}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
+        response = coffee_queue_table.scan()
+        queue = sorted(response['Items'], key=lambda x: x['order'])
+        if queue:
+            first_user = queue[0]
+            message = f"{first_user['coffee']}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
+
     elif action == "history":
-        one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        logs = Log.query.filter(Log.date >= one_month_ago).all()
+        one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        response = log_table.scan()
+        logs = [log for log in response['Items'] if log['date'] >= one_month_ago]
         if logs:
-            log_messages = [f"[{log.date.strftime('%Y-%m-%d %H:%M:%S')}] - {log.action} - {log.username} - {log.reason}" if log.reason else f"[{log.date.strftime('%Y-%m-%d %H:%M:%S')}] - {log.action} - {log.username}" for log in logs]
+            log_messages = [f"[{log['date']}] - {log['action']} - {log['username']} - {log['reason']}" if log['reason'] else f"[{log['date']}] - {log['action']} - {log['username']}" for log in logs]
             message = "지난 한 달간의 로그:\n" + "\n".join(log_messages)
         else:
             message = "지난 한 달간의 로그가 없습니다."
+    
     else:
         message = "잘못된 명령어입니다."
 
@@ -175,6 +153,5 @@ def health_check():
     return jsonify(status="OK"), 200
 
 if __name__ == "__main__":
-    create_tables()
-    port = int(os.environ.get("PORT", 0))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
