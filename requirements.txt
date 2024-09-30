@@ -10,3 +10,4 @@ slack_sdk==3.31.0
 SQLAlchemy==2.0.31
 typing_extensions==4.12.2
 Werkzeug==3.0.3
+boto3==1.21.9

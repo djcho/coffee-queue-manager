@@ -4,17 +4,33 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import os
 from datetime import datetime, timedelta, timezone
+import boto3
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
 
 db = SQLAlchemy(app)
 
-# 환경 변수 로드
+# 환경 변수 로드 (Slack 및 AWS)
 slack_token = os.environ.get("SLACK_BOT_TOKEN")
+aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+
+# Slack 클라이언트 생성
 client = WebClient(token=slack_token)
 
-# 모델 정의
+# DynamoDB 클라이언트 생성 (서울 리전 설정)
+dynamodb = boto3.resource(
+    'dynamodb',
+    region_name='ap-northeast-2',
+    aws_access_key_id=aws_access_key,
+    aws_secret_access_key=aws_secret_key
+)
+
+# DynamoDB 테이블 선택 
+table = dynamodb.Table('coffee-queue')
+
+# 데이터베이스 모델 정의
 class CoffeeQueue(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False)
@@ -40,6 +56,19 @@ def create_tables():
     with app.app_context():
         db.create_all()
 
+# DynamoDB에 사용자 삽입 함수
+def insert_into_dynamodb(username, reason):
+    response = table.put_item(
+        Item={
+            'id': str(datetime.now().timestamp()),  # 유니크한 ID 생성
+            'username': username,
+            'reason': reason,
+            'date_added': datetime.now(timezone.utc).isoformat()
+        }
+    )
+    return response
+
+# 큐 목록 가져오기
 def get_queue_list():
     queue = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
     if not queue:
@@ -50,18 +79,18 @@ def get_queue_list():
         queue_list.append(f"{user.username} ({date_str} : {user.reason})")
     return "\n".join(queue_list)
 
+# 로그 기록 함수
 def log_action(action, username, reason=None):
-    # 한 달 지난 로그 삭제
     one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
     Log.query.filter(Log.date < one_month_ago).delete()
     db.session.commit()
 
-    # 새로운 로그 추가
     reason = reason or ""
     new_log = Log(action=action, username=username, reason=reason)
     db.session.add(new_log)
     db.session.commit()
 
+# 커피 큐 핸들러 (Slack 명령어 처리)
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
@@ -93,6 +122,10 @@ def coffee_queue_handler():
             new_user = CoffeeQueue(username=username, reason=reason, order=max_order + 1)
             db.session.add(new_user)
             db.session.commit()
+
+            # DynamoDB에 데이터 삽입
+            insert_into_dynamodb(username, reason)
+
             log_action("add", username, reason)
             message = f"{username}님이 커피 큐에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
         else:
@@ -101,7 +134,6 @@ def coffee_queue_handler():
         first_user = CoffeeQueue.query.order_by(CoffeeQueue.order).first()
         if first_user:
             db.session.delete(first_user)
-            adjust_order_after_remove(0)  # 0번 인덱스부터 순서 조정
             db.session.commit()
             log_action("shoot", first_user.username)
             message = f"{first_user.username}님이 커피 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
@@ -120,55 +152,6 @@ def coffee_queue_handler():
             message = f"{first_user.username}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
         else:
             message = "커피 큐가 비어 있습니다."
-    elif action == "remove":
-        try:
-            index = int(command[1])
-            user_to_remove = CoffeeQueue.query.order_by(CoffeeQueue.order).offset(index).first()
-            if user_to_remove:
-                username = user_to_remove.username
-                reason = user_to_remove.reason
-                
-                db.session.delete(user_to_remove)
-
-                queueDatas = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
-                for queueData in queueDatas[index:]:
-                    queueData.order -= 1
-
-                db.session.commit()
-                             
-                log_action("remove", username, reason)
-                message = f"{username}님이 큐에서 제거되었습니다.\n현재 큐:\n{get_queue_list()}"
-            else:
-                message = "잘못된 인덱스입니다. 유효한 인덱스를 입력하세요."
-        except (ValueError, IndexError):
-            message = "유효한 숫자를 입력하세요."
-    elif action == "insert":
-        try:
-            index = int(command[1])
-            username = command[2]
-            reason = " ".join(command[3:])
-            if username not in userpool:
-                message = f"{username}님은 통합플랫폼 팀이 아닙니다.\n현재 큐:\n{get_queue_list()}"
-            else:
-                if 0 <= index <= CoffeeQueue.query.count():
-                    
-                    new_user = CoffeeQueue(username=username, reason=reason, order=index)
-                    db.session.add(new_user)
-
-                    queueDatas = CoffeeQueue.query.order_by(CoffeeQueue.order).all()
-                    for queueData in queueDatas[index + 1:]:
-                        queueData.order -= 1
-
-                    db.session.commit()
-
-                    log_action("insert", username, reason)
-                    message = f"{username}님이 인덱스 {index} 위치에 추가되었습니다.\n현재 큐:\n{get_queue_list()}"
-                else:
-                    message = "유효한 인덱스를 입력하세요."
-        except (ValueError, IndexError):
-            message = "유효한 숫자를 입력하세요."
-        except Exception as e:
-            message = f"오류 발생: {str(e)}"
     elif action == "history":
         one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
         logs = Log.query.filter(Log.date >= one_month_ago).all()
