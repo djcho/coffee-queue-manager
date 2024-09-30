@@ -1,24 +1,36 @@
-import boto3
+from flask import Flask, request, jsonify
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 import os
 from datetime import datetime, timedelta, timezone
+import boto3
 
-# AWS DynamoDB 리소스 생성 (리전 설정)
+app = Flask(__name__)
+
+# 환경 변수 로드
+slack_token = os.environ.get("SLACK_BOT_TOKEN")
+aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+
+client = WebClient(token=slack_token)
+
+# DynamoDB 리소스 생성 (서울 리전)
 dynamodb = boto3.resource(
     'dynamodb',
     region_name='ap-northeast-2',  # 서울 리전
-    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    aws_access_key_id=aws_access_key,
+    aws_secret_access_key=aws_secret_key
 )
 
-# DynamoDB 테이블
+# 테이블 초기화
 coffee_queue_table = dynamodb.Table('coffee-queue')
-log_table = dynamodb.Table('coffee-queue-log')
+log_table = dynamodb.Table('coffee-queue-log')  # 로그 테이블도 DynamoDB에 있다고 가정
 
-# 날짜 형식을 MM/DD 형태로 변환하는 헬퍼 함수
+# 날짜 형식을 MM/DD로 변환하는 함수
 def format_date(iso_date_str):
     return datetime.fromisoformat(iso_date_str).strftime('%m/%d')
 
-# 큐 목록 가져오기 (날짜 형식 변경)
+# 큐 목록 가져오기
 def get_queue_list():
     response = coffee_queue_table.scan()
     queue = response.get('Items', [])
@@ -33,11 +45,15 @@ def get_queue_list():
         queue_list.append(f"{user['coffee']} ({date_str} : {user['reason']})")
     return "\n".join(queue_list)
 
-# 로그 기록 함수 (DynamoDB에 로그 기록)
+# 로그 기록 함수
 def log_action(action, username, reason=None):
+    # 한 달 지난 로그 삭제 (DynamoDB에 TTL(Time to Live) 설정 필요)
+    one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    # 새로운 로그 추가
     log_table.put_item(
         Item={
-            'id': str(datetime.now().timestamp()),  # 고유한 ID로 타임스탬프 사용
+            'id': str(datetime.now().timestamp()),  # 유니크한 ID로 타임스탬프 사용
             'action': action,
             'username': username,
             'reason': reason if reason else "",
@@ -45,20 +61,7 @@ def log_action(action, username, reason=None):
         }
     )
 
-# 로그 조회 (날짜 형식 변경)
-def get_logs():
-    one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    response = log_table.scan()
-    logs = [log for log in response['Items'] if log['date'] >= one_month_ago]
-    
-    if logs:
-        # 로그의 날짜 형식 변경
-        log_messages = [f"[{format_date(log['date'])}] - {log['action']} - {log['username']} - {log['reason']}" for log in logs]
-        return "\n".join(log_messages)
-    else:
-        return "지난 한 달간의 로그가 없습니다."
-
-# 커피 큐 핸들러 (날짜 형식을 MM/DD로 출력)
+# 사용자 추가 (DynamoDB로 변경)
 @app.route('/cq', methods=['POST'])
 def coffee_queue_handler():
     data = request.form
@@ -105,7 +108,7 @@ def coffee_queue_handler():
 
     elif action == "shoot":
         response = coffee_queue_table.scan()
-        queue = sorted(response['Items'], key=lambda x: int(x['order']))
+        queue = sorted(response['Items'], key=lambda x: x['order'])
         if queue:
             first_user = queue[0]
             coffee_queue_table.delete_item(Key={'coffee': first_user['coffee']})
@@ -123,7 +126,7 @@ def coffee_queue_handler():
 
     elif action == "show":
         response = coffee_queue_table.scan()
-        queue = sorted(response['Items'], key=lambda x: int(x['order']))
+        queue = sorted(response['Items'], key=lambda x: x['order'])
         if queue:
             first_user = queue[0]
             message = f"{first_user['coffee']}님이 커피를 쏠 차례입니다. 🔫\n현재 큐:\n{get_queue_list()}"
@@ -131,7 +134,14 @@ def coffee_queue_handler():
             message = "커피 큐가 비어 있습니다."
 
     elif action == "history":
-        message = get_logs()
+        one_month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        response = log_table.scan()
+        logs = [log for log in response['Items'] if log['date'] >= one_month_ago]
+        if logs:
+            log_messages = [f"[{format_date(log['date'])}] - {log['action']} - {log['username']} - {log['reason']}" if log['reason'] else f"[{format_date(log['date'])}] - {log['action']} - {log['username']}" for log in logs]
+            message = "지난 한 달간의 로그:\n" + "\n".join(log_messages)
+        else:
+            message = "지난 한 달간의 로그가 없습니다."
     
     else:
         message = "잘못된 명령어입니다."
